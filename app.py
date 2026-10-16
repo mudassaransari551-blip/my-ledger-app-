@@ -1,206 +1,16 @@
-import sqlite3
-import streamlit as st
-
-# System Limits (Risk Management)
-MAX_SINGLE_ADD_LIMIT = 20000.0  # Ek dafa me max limit
-MAX_USER_BALANCE_CAP = 50000.0  # User ka max balance limit
-
-st.set_page_config(page_title="Sports Ledger & Betting", layout="centered")
-
-conn = sqlite3.connect("ledger.db", check_same_thread=False)
-cursor = conn.cursor()
-
-# Database Tables Initialization
-cursor.execute(
-    """
-CREATE TABLE IF NOT EXISTS users (
-    username TEXT PRIMARY KEY,
-    password TEXT NOT NULL,
-    balance REAL DEFAULT 0.0
-)
-"""
-)
-
-cursor.execute(
-    """
-CREATE TABLE IF NOT EXISTS history (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    username TEXT,
-    type TEXT,
-    amount REAL,
-    note TEXT,
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-)
-"""
-)
-
-cursor.execute(
-    """
-CREATE TABLE IF NOT EXISTS deposits (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    username TEXT,
-    amount REAL,
-    trx_id TEXT,
-    status TEXT DEFAULT 'Pending'
-)
-"""
-)
-
-cursor.execute(
-    """
-CREATE TABLE IF NOT EXISTS bets (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    username TEXT,
-    match_name TEXT,
-    prediction TEXT,
-    stake REAL,
-    status TEXT DEFAULT 'Pending'
-)
-"""
-)
-conn.commit()
-
-st.sidebar.title("Navigation")
-menu = st.sidebar.radio("Go to", ["User Portal", "Admin Panel"])
-
-if menu == "User Portal":
-    st.header("👤 User Dashboard & Betting Slip")
-
-    user_input = st.text_input("Username")
-    pass_input = st.text_input("Password", type="password")
-
-    if st.button("Login"):
-        cursor.execute(
-            "SELECT balance FROM users WHERE username=? AND password=?",
-            (user_input, pass_input),
-        )
-        result = cursor.fetchone()
-
-        if result:
-            st.session_state["logged_user"] = user_input
-            st.success(f"Welcome back, {user_input}!")
-        else:
-            st.error("Invalid Username or Password")
-
-    if "logged_user" in st.session_state:
-        current_user = st.session_state["logged_user"]
-
-        # Fetch latest balance
-        cursor.execute(
-            "SELECT balance FROM users WHERE username=?", (current_user,)
-        )
-        bal_res = cursor.fetchone()
-        current_bal = bal_res[0] if bal_res else 0.0
-
-        st.metric(label="Your Available Balance", value=f"PKR {current_bal:,.2f}")
-        st.info(
-            f"⚠️ Limits: Max Balance Cap is PKR {MAX_USER_BALANCE_CAP:,.0f}"
-        )
-
-        tab_u1, tab_u2, tab_u3, tab_u4 = st.tabs(
-            ["Deposit Request", "Place Bet", "My Bets", "History"]
-        )
-
-        with tab_u1:
-            st.subheader("Request Balance Deposit")
-            st.write(
-                "Pehle Admin ko JazzCash/Easypaisa transfer karein, phir yahan request dalein."
-            )
-            dep_amount = st.number_input(
-                "Deposit Amount (PKR)",
-                min_value=1.0,
-                max_value=MAX_SINGLE_ADD_LIMIT,
-                key="dep_amt",
-            )
-            trx_id = st.text_input("Transaction ID / Reference No")
-
-            if st.button("Submit Deposit Request"):
-                if trx_id:
-                    cursor.execute(
-                        "INSERT INTO deposits (username, amount, trx_id, status) VALUES (?, ?, ?, 'Pending')",
-                        (current_user, dep_amount, trx_id),
-                    )
-                    conn.commit()
-                    st.success(
-                        "Deposit request submitted! Admin approval ka intezar karein."
-                    )
-                else:
-                    st.warning("Please enter Transaction ID.")
-
-        with tab_u2:
-            st.subheader("Place Sports Bet")
-            match_name = st.text_input(
-                "Match Name (e.g., Pakistan vs India)"
-            )
-            prediction = st.text_input(
-                "Your Pick / Prediction (e.g., Pakistan Win)"
-            )
-            stake_amount = st.number_input(
-                "Bet Amount (PKR)", min_value=1.0, key="stake_amt"
-            )
-
-            if st.button("Place Bet"):
-                if stake_amount > current_bal:
-                    st.error("Aapke paas itna balance nahi hai!")
-                elif stake_amount > MAX_SINGLE_ADD_LIMIT:
-                    st.error(
-                        f"Max single bet limit is PKR {MAX_SINGLE_ADD_LIMIT}"
-                    )
-                else:
-                    # Deduct amount temporarily or lock it
-                    cursor.execute(
-                        "UPDATE users SET balance = balance - ? WHERE username = ?",
-                        (stake_amount, current_user),
-                    )
-                    cursor.execute(
-                        "INSERT INTO bets (username, match_name, prediction, stake, status) VALUES (?, ?, ?, ?, 'Active')",
-                        (
-                            current_user,
-                            match_name,
-                            prediction,
-                            stake_amount,
-                        ),
-                    )
-                    conn.commit()
-                    st.success("Bet successfully placed!")
-                    st.rerun()
-
-        with tab_u3:
-            st.subheader("Your Active & Past Bets")
-            cursor.execute(
-                "SELECT match_name, prediction, stake, status FROM bets WHERE username=?",
-                (current_user,),
-            )
-            user_bets = cursor.fetchall()
-            if user_bets:
-                for b in user_bets:
-                    st.text(
-                        f"Match: {b[0]} | Pick: {b[1]} | Stake: PKR {b[2]} | Status: {b[3]}"
-                    )
-            else:
-                st.info("No bets found.")
-
-        with tab_u4:
-            st.subheader("Transaction History")
-            cursor.execute(
-                "SELECT type, amount, note, timestamp FROM history WHERE username=? ORDER BY id DESC",
-                (current_user,),
-            )
-            logs = cursor.fetchall()
-            if logs:
-                for log in logs:
-                    st.text(
-                        f"[{log[3]}] {log[0].upper()}: PKR {log[1]} ({log[2]})"
-                    )
-            else:
-                st.info("No history available.")
-
 elif menu == "Admin Panel":
     st.header("🔑 Admin Control Panel")
 
     admin_pass = st.text_input("Enter Admin Secret Key", type="password")
+    admin_login_btn = st.button("Admin Login")
 
-    if admin_pass == "admin123":
+    if admin_login_btn or admin_pass == "admin123":
+        if admin_pass == "admin123":
+            st.session_state["admin_logged_in"] = True
+        else:
+            st.error("Ghalt Admin Password!")
+
+    if st.session_state.get("admin_logged_in", False):
         st.success("Admin Authenticated Successfully")
 
         tab_a1, tab_a2, tab_a3, tab_a4, tab_a5 = st.tabs(
@@ -250,7 +60,6 @@ elif menu == "Admin Panel":
                     col1, col2 = st.columns(2)
                     with col1:
                         if st.button(f"Approve Deposit {d[0]}"):
-                            # Check balance cap
                             cursor.execute(
                                 "SELECT balance FROM users WHERE username=?",
                                 (d[1],),
@@ -393,5 +202,3 @@ elif menu == "Admin Panel":
                 st.table(all_u)
             else:
                 st.info("No users found.")
-    elif admin_pass != "":
-        st.error("Ghalt Admin Password!")
